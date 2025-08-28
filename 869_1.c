@@ -1,0 +1,81 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+static ngx_addr_t *
+ngx_resolver_export(ngx_resolver_t *r, ngx_resolver_node_t *rn,
+    ngx_uint_t rotate)
+{
+    ngx_addr_t            *dst;
+    ngx_uint_t             d, i, j, n;
+    u_char               (*sockaddr)[NGX_SOCKADDRLEN];
+    in_addr_t             *addr;
+    struct sockaddr_in    *sin;
+#if (NGX_HAVE_INET6)
+    struct in6_addr       *addr6;
+    struct sockaddr_in6   *sin6;
+#endif
+    const char *dbg = getenv("NGX_RESOLVER_DEBUG");
+    int debug = (dbg == NULL || dbg[0] == '1' || dbg[0] == 't' || dbg[0] == 'T' || (dbg[0] == 'o' && dbg[1] == 'n'));
+    n = rn->naddrs;
+#if (NGX_HAVE_INET6)
+    n += rn->naddrs6;
+#endif
+    dst = ngx_resolver_calloc(r, n * sizeof(ngx_addr_t));
+    if (dst == NULL) {
+        if (debug) fprintf(stderr, "resolver_export_alloc_fail_dst\n");
+        return NULL;
+    }
+    sockaddr = ngx_resolver_calloc(r, n * NGX_SOCKADDRLEN);
+    if (sockaddr == NULL) {
+        if (debug) fprintf(stderr, "resolver_export_alloc_fail_sockaddr\n");
+        ngx_resolver_free(r, dst);
+        return NULL;
+    }
+    i = 0;
+    d = rotate ? ngx_random() % n : 0;
+    if (debug) fprintf(stderr, "resolver_export_count=%u rotate=%u\n", (unsigned)n, (unsigned)rotate);
+    if (rn->naddrs) {
+        j = rotate ? ngx_random() % rn->naddrs : 0;
+        addr = (rn->naddrs == 1) ? &rn->u.addr : rn->u.addrs;
+        do {
+            sin = (struct sockaddr_in *) sockaddr[d];
+            sin->sin_family = AF_INET;
+            sin->sin_addr.s_addr = addr[j++];
+            if (debug) fprintf(stderr, "resolver_export_ipv4=%u\n", (unsigned) ntohl(sin->sin_addr.s_addr));
+            dst[d].sockaddr = (struct sockaddr *) sin;
+            dst[d++].socklen = sizeof(struct sockaddr_in);
+            if (d == n) {
+                d = 0;
+            }
+            if (j == rn->naddrs) {
+                j = 0;
+            }
+        } while (++i < rn->naddrs);
+    }
+#if (NGX_HAVE_INET6)
+    if (rn->naddrs6) {
+        j = rotate ? ngx_random() % rn->naddrs6 : 0;
+        addr6 = (rn->naddrs6 == 1) ? &rn->u6.addr6 : rn->u6.addrs6;
+        do {
+            sin6 = (struct sockaddr_in6 *) sockaddr[d];
+            sin6->sin6_family = AF_INET6;
+            ngx_memcpy(sin6->sin6_addr.s6_addr, addr6[j++].s6_addr, 16);
+            if (debug) {
+                int k;
+                fprintf(stderr, "resolver_export_ipv6=");
+                for (k = 0; k < 16; k++) fprintf(stderr, "%02x", sin6->sin6_addr.s6_addr[k]);
+                fprintf(stderr, "\n");
+            }
+            dst[d].sockaddr = (struct sockaddr *) sin6;
+            dst[d++].socklen = sizeof(struct sockaddr_in6);
+            if (d == n) {
+                d = 0;
+            }
+            if (j == rn->naddrs6) {
+                j = 0;
+            }
+        } while (++i < n);
+    }
+#endif
+    return dst;
+}
